@@ -49,9 +49,9 @@ local function load_shared_lib(so_name)
     end
 end
 
-
-local _M = {}
-local mt = { __index = _M }
+-- del langk
+--local _M = {}
+--local mt = { __index = _M }
 
 
 local clib = load_shared_lib("libredis_slot.so")
@@ -79,13 +79,13 @@ local commands = {
     --[["bgsave",]]      --[["blpop",]]    --[["brpop",]]
     --[["brpoplpush",]]  --[["config", ]]   --[["dbsize",]]
     --[["debug", ]]      "decr",              "decrby",
-    --[["del",]]         --[["discard",           "echo",]]
-    --[["eval",]]              "exec",              "exists",
-    --[["expire",            "expireat",          "flushall",
+    "del",                   --[["discard",           "echo",]]
+    "eval",              "exec",              "exists",
+   "expire",            "expireat",           --[["flushall",
     "flushdb",]]           "get",               "getbit",
     "getrange",          "getset",            "hdel",
     "hexists",           "hget",              "hgetall",
-    "hincrby",           "hkeys",             "hlen",
+    "hincrbyfloat", "hincrby",           "hkeys",             "hlen",
     "hmget",             "hmset",             "hset",
     "hsetnx",            "hvals",             "incr",
     "incrby",           --[["info",]]         --[["keys",]]
@@ -100,12 +100,12 @@ local commands = {
     --[["randomkey",         "rename",            "renamenx",]]
     "rpop",              --[["rpoplpush",]]   "rpush",
     "rpushx",            "sadd",              --[["save",]]
-    "scard",             --[["script",]]
+    "scard",             "script",
     --[["sdiff",             "sdiffstore",]]
     --[["select",]]            "set",               "setbit",
     "setex",             "setnx",             "setrange",
-    --[["shutdown",          "sinter",            "sinterstore",
-    "sismember",         "slaveof",           "slowlog",]]
+    --[["shutdown",          "sinter",            "sinterstore",]]
+    "sismember",         --[["slaveof",           "slowlog",]]
     "smembers",          "smove",             "sort",
     "spop",              "srandmember",       "srem",
     "strlen",            --[["subscribe",]]         "sunion",
@@ -116,7 +116,7 @@ local commands = {
     "zrange",            "zrangebyscore",     "zrank",
     "zrem",              "zremrangebyrank",   "zremrangebyscore",
     "zrevrange",         "zrevrangebyscore",  "zrevrank",
-    "zscore",            --[["zunionstore",    "evalsha"]]
+    "zscore",            --[["zunionstore",]]    "evalsha"
 }
 
 local _M = {}
@@ -130,13 +130,18 @@ local slot_cache = {}
 
 function _M.fetch_slots(self)
     local serv_list = self.config.serv_list
-    local red = redis:new()
+    -- del langk
+--    local red = redis:new()
     for i=1,#serv_list do
         local ip = serv_list[i].ip
         local port = serv_list[i].port
+        local red = redis:new() -- add langk
         local ok, err = red:connect(ip_string(ip), port)
         if ok then
+            -- add langk comment redis command "cluster slots"
+            -- 获取集群slots信息，如[[0, 5406, ["192.168.8.2", 7001, "83fc537f30ce375b0028ef16cf7ddceedf0a537e"]],[...]]
             local slot_info, err = red:cluster("slots")
+            self:set_keepalive(red) -- add langk
             if slot_info then
                 local slots = {}
                 for i=1,#slot_info do
@@ -149,6 +154,9 @@ function _M.fetch_slots(self)
                         end
                     end
                 end
+                -- add langk comment 16383 个slot
+                -- slot_cache每个缓存名中有16383个槽信息，每个槽信息中包括这个槽对应的主节点和从节点IP和端口
+                -- 如{"REDIS_NAME":{"0":{"cur":"1", "serv_list"[{"ip":"192.168.8.1", "port":"7000"}, {"ip":"192.168.8.1", "port":"7001"}]}, {"1":{"cur":"1", ...}}, {...}}}
                 slot_cache[self.config.name] = slots
                 --self.slots = slots
                 --debug_log("fetch_slots", self)
@@ -197,7 +205,8 @@ local function _do_cmd(self, cmd, key, ...)
         table.insert(self._reqs, t)
         return
     end
-    local config = self.config
+    -- del langk
+--    local config = self.config
 
     key = tostring(key)
     local slot = redis_slot(key)
@@ -214,8 +223,11 @@ local function _do_cmd(self, cmd, key, ...)
             if ok then
                 slots[slot].cur = index
                 local res, err = redis_client[cmd](redis_client, key, ...)
-                redis_client:set_keepalive(config.keepalive_timeout or DEFUALT_KEEPALIVE_TIMEOUT,
-                                           config.keepalove_cons or DEFAULT_KEEPALIVE_CONS)
+                -- modify langk
+--                redis_client:set_keepalive(config.keepalive_timeout or DEFUALT_KEEPALIVE_TIMEOUT,
+--                    config.keepalive_cons or DEFAULT_KEEPALIVE_CONS)
+                self:set_keepalive(redis_client)
+
                 if err and string.sub(err, 1, 5) == "MOVED" then
                     self:fetch_slots()
                     break
@@ -286,8 +298,11 @@ function _M.commit_pipeline(self)
                 end
             end
             local res, err = ins:commit_pipeline()
-            ins:set_keepalive(config.keepalive_timeout or DEFUALT_KEEPALIVE_TIMEOUT,
-                                           config.keepalove_cons or DEFAULT_KEEPALIVE_CONS)
+            -- modify langk
+--            ins:set_keepalive(config.keepalive_timeout or DEFUALT_KEEPALIVE_TIMEOUT,
+--                config.keepalive_cons or DEFAULT_KEEPALIVE_CONS)
+            self:set_keepalive(ins)
+
             if err then
                 return nil, err.." return from "..tostring(ip)..":"..tostring(port)
             end
@@ -310,5 +325,127 @@ end
 function _M.cancel_pipeline(self)
     self._reqs = nil
 end
+
+
+-- add langk
+function _M.set_keepalive(self, redis_client)
+    local config = self.config
+    redis_client:set_keepalive(config.keepalive_timeout or DEFUALT_KEEPALIVE_TIMEOUT,
+        config.keepalove_cons or DEFAULT_KEEPALIVE_CONS)
+end
+
+
+-- add langk
+local function fetch_nodes(self)
+    local serv_list = self.config.serv_list
+    local nodes = {}
+    for i=1,#serv_list do
+        local ip = serv_list[i].ip
+        local port = serv_list[i].port
+        local red = redis:new()
+        local ok, err = red:connect(ip_string(ip), port)
+        if ok then
+            local slot_info, err = red:cluster("slots")
+            self:set_keepalive(red)
+            if slot_info then
+                for i=1,#slot_info do
+                    table.insert(nodes, slot_info[i][3])
+                end
+            end
+        end
+    end
+
+    return nodes
+end
+
+
+-- add langk
+local function cmd_script(self, cmd, script, numkeys, key, ...)
+
+    local res, err
+    local slot
+    numkeys = tonumber(numkeys)
+    if (numkeys and numkeys > 0) then
+        key = tostring(key)
+        slot = redis_slot(key)
+    else
+        math.randomseed (os.time())
+        slot = math.random(16383)
+    end
+
+    for k=1, MAGIC_TRY do
+        local slots = slot_cache[self.config.name]
+        local serv_list = slots[slot].serv_list
+        local index =slots[slot].cur
+        for i=1,#serv_list do
+            local ip = serv_list[index].ip
+            local port = serv_list[index].port
+            local redis_client = redis:new()
+            local ok, err = redis_client:connect(ip_string(ip), port)
+            if ok then
+                slots[slot].cur = index
+                res, err = redis_client[cmd](redis_client, script, numkeys, key, ...)
+                self:set_keepalive(redis_client)
+
+                if err and string.sub(err, 1, 5) == "MOVED" then
+                    self:fetch_slots()
+                    break
+                end
+
+                if not res then
+                    return nil, err
+                end
+
+                return res, err
+            else
+                res, err = nil, err
+                index = next_index(index, #serv_list)
+            end
+        end
+    end
+
+    return res, err
+end
+
+
+-- add langk
+function _M.script(self, key, ...)
+    local nodes = fetch_nodes(self)
+    local res, err
+
+    for k=1, MAGIC_TRY do
+        for i = 1, #nodes do
+            local redis_client = redis:new()
+            local ok, err = redis_client:connect(ip_string(nodes[i][1]), nodes[i][2])
+            if ok then
+                res, err = redis_client:script(key, ...)
+                self:set_keepalive(redis_client)
+
+                if not res then
+                    return nil, err
+                end
+            else
+                res, err = nil, err
+                nodes = fetch_nodes(self)
+                break
+            end
+        end
+    end
+
+    return res, err
+end
+
+
+-- add langk
+function _M.evalsha(self, sha1, numkeys, key, ...)
+    return cmd_script(self, "evalsha", sha1, numkeys, key, ...)
+end
+
+
+-- add langk
+function _M.eval(self, script, numkeys, key, ...)
+    return cmd_script(self, "eval", script, numkeys, key, ...)
+end
+
 
 return _M
